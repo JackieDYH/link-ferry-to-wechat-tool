@@ -393,7 +393,7 @@ export async function processNote({ url, type = 'auto', title = null, digest = n
     p('ok', '✅ 图文草稿创建成功! media_id: ' + mediaId);
   }
 
-  const outputDir = path.join(DATA_DIR, 'xhs-backup');
+  const outputDir = path.join(DATA_DIR, 'output');
   fs.mkdirSync(outputDir, { recursive: true });
   const backup = path.join(outputDir, 'xhs_' + note.noteId + '_' + finalType + '_' + Date.now() + '.txt');
   fs.writeFileSync(backup, '标题: ' + finalTitle + '\n摘要: ' + finalDigest + '\n类型: ' + finalType + '\n图片: ' + files.join('\n') + '\n\n' + content, 'utf8');

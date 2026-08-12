@@ -1,0 +1,13 @@
+{
+  "name": "xhs-wechat-server",
+  "version": "2.0.0",
+  "description": "小红书/头条→公众号 上传工具后端（Express）",
+  "type": "module",
+  "main": "xhs-web-server.mjs",
+  "scripts": {
+    "start": "node xhs-web-server.mjs"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

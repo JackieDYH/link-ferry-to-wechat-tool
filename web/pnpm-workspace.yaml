@@ -1,0 +1,3 @@
+# pnpm 11 配置：放行 esbuild 构建脚本（vite 依赖，需生成平台二进制）
+allowBuilds:
+  esbuild: true

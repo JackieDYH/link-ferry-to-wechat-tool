@@ -1,0 +1,17 @@
+{
+  "name": "xhs-wechat-web",
+  "version": "2.0.0",
+  "description": "小红书/今日头条文章 → 微信公众号草稿箱上传工具（Vue3 前端）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "vue": "^3.4.31"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.5",
+    "vite": "^5.3.3"
+  }
+}

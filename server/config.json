@@ -1,0 +1,7 @@
+{
+    "appId":  "",
+    "appSecret":  "",
+    "author":  "Jackie开发技术栈",
+    "wechatApiBase":  "https://api.weixin.qq.com/cgi-bin",
+    "dataDir":  "../data"
+}

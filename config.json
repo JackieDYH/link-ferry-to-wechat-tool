@@ -1,7 +1,0 @@
-{
-  "appId": "",
-  "appSecret": "",
-  "author": "时代手札",
-  "wechatApiBase": "https://api.weixin.qq.com/cgi-bin",
-  "dataDir": "./output/cache"
-}
