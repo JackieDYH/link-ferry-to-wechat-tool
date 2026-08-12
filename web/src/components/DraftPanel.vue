@@ -1,5 +1,5 @@
 <script setup>
-// 草稿箱管理面板：公网 IP + 素材统计 + 孤儿素材清理 + 草稿列表（跟随页面密钥账号）
+// 草稿箱管理面板：公网 IP + 素材统计 + 孤儿素材清理 + 草稿列表（含多选批量删除）
 import { ref, onMounted } from 'vue'
 import { apiPost, apiGet, fmtTime } from '../store.js'
 
@@ -13,6 +13,7 @@ const loading = ref(false)
 const cleaning = ref(false)
 const cleanStatus = ref('')
 const deletingId = ref('') // 正在删除的草稿 media_id
+const selected = ref([])   // 已勾选的 media_id 列表
 
 // 当前公网 IP（供公众号白名单使用），点击复制
 async function loadIp() {
@@ -54,6 +55,7 @@ async function loadDrafts() {
   } catch (e) {
     matStat.value = '获取失败: ' + e.message
   }
+  selected.value = []
   loading.value = false
 }
 
@@ -68,6 +70,33 @@ async function removeDraft(item) {
     alert('删除失败: ' + e.message)
   }
   deletingId.value = ''
+}
+
+// —— 多选批量删除 ——
+function toggleOne(id, checked) {
+  if (checked) { if (!selected.value.includes(id)) selected.value.push(id) }
+  else selected.value = selected.value.filter(x => x !== id)
+}
+function isSelected(id) { return selected.value.includes(id) }
+function allChecked() {
+  return drafts.value.length > 0 && selected.value.length === drafts.value.length
+}
+function toggleAll(checked) {
+  selected.value = checked ? drafts.value.map(d => d.media_id) : []
+}
+async function batchDelete() {
+  const ids = selected.value
+  if (!ids.length) return
+  if (!confirm(`确定删除选中的 ${ids.length} 篇草稿？删除后不可恢复。`)) return
+  let ok = 0, fail = 0
+  for (const id of ids) {
+    try {
+      await apiPost('/api/delete', { media_id: id })
+      ok++
+    } catch { fail++ }
+  }
+  alert(`批量删除完成：成功 ${ok} 篇${fail ? `，失败 ${fail} 篇` : ''}`)
+  loadDrafts()
 }
 
 // 清理未被任何草稿/已发布内容引用的素材（孤儿），分批删除（每批最多 200）
@@ -119,6 +148,15 @@ onMounted(() => { loadIp(); loadDrafts() })
       <span class="muted">{{ cleanStatus }}</span>
     </div>
 
+    <!-- 多选工具栏（紧贴列表上方） -->
+    <div class="batch-bar">
+      <label class="batch-label">
+        <input type="checkbox" :checked="allChecked()" @change="e => toggleAll(e.target.checked)"> 全选
+      </label>
+      <span class="muted">已选 {{ selected.length }} 篇</span>
+      <button class="btn danger sm" :disabled="!selected.length" @click="batchDelete">🗑️ 批量删除</button>
+    </div>
+
     <p class="sub">公众号草稿箱（最近 20 条），删除草稿不会删除素材库里的图片。</p>
 
     <!-- 草稿列表 -->
@@ -126,9 +164,12 @@ onMounted(() => { loadIp(); loadDrafts() })
       <div v-if="loading" class="muted pad">加载中...</div>
       <div v-else-if="!drafts.length" class="muted pad">草稿箱为空，点「刷新列表」查看。</div>
       <div v-else v-for="it in drafts" :key="it.media_id" class="draft-row">
-        <div class="draft-info">
-          <div class="draft-title" :title="it.title">{{ it.title }}</div>
-          <div class="muted">{{ fmtTime(it.update_time) }}</div>
+        <div class="draft-left">
+          <input type="checkbox" class="draft-cb" :checked="isSelected(it.media_id)" @change="e => toggleOne(it.media_id, e.target.checked)">
+          <div class="draft-info">
+            <div class="draft-title" :title="it.title">{{ it.title }}</div>
+            <div class="muted">{{ fmtTime(it.update_time) }}</div>
+          </div>
         </div>
         <button class="btn danger sm" :disabled="deletingId === it.media_id" @click="removeDraft(it)">
           {{ deletingId === it.media_id ? '删除中...' : '删除' }}
