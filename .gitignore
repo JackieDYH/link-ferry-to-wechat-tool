@@ -3,5 +3,13 @@ config.local.json
 
 # 运行产物（可重建）
 output/
+
+# Vue3 前端相关
+dist/
+node_modules/
+
+# 日志与临时文件
 *.log
 *.tmp
+Thumbs.db
+.DS_Store
