@@ -1,0 +1,7 @@
+# 敏感配置（真实凭据：AppID/AppSecret）——绝不提交
+config.local.json
+
+# 运行产物（可重建）
+output/
+*.log
+*.tmp
