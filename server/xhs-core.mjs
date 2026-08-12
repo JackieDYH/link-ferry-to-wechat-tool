@@ -19,8 +19,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** 加载配置：config.json 为默认，若存在 config.local.json 则逐项覆盖（本地优先） */
 export function loadConfig() {
-  const base = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
-  const localPath = path.join(__dirname, 'config.local.json');
+  const base = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf8'));
+  const localPath = path.join(__dirname, '..', 'config.local.json');
   if (fs.existsSync(localPath)) {
     try {
       const local = JSON.parse(fs.readFileSync(localPath, 'utf8'));

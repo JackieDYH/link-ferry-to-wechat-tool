@@ -36,14 +36,14 @@ wechat-automation/
 │   ├── cache/             ← 缓存集中地（可重建）
 │   │   ├── notes/         ← 下载的小红书/头条原图（按笔记 id 分文件夹）
 │   │   └── xhs-backup/    ← 每次上传的存档日志
+├── config.json            ← 默认配置模板（不含密钥，可提交 git）
+├── config.local.json      ← 本地真实密钥（git 忽略，覆盖默认）
 ├── server/                ← 🖥️ 后端（Node + Express）
 │   ├── xhs-web-server.mjs ← 服务器（端口 9527，托管前端 + 提供 API）
 │   ├── xhs-core.mjs       ← 核心业务逻辑（不要动）
 │   ├── xhs-to-wechat.mjs  ← 命令行版（一条命令上传）
 │   ├── delete-draft.mjs   ← 删除草稿/素材的小工具
 │   ├── clean-orphans.mjs  ← 清理未使用素材
-│   ├── config.json        ← 默认配置模板（不含密钥，可提交 git）
-│   ├── config.local.json  ← 本地真实密钥（git 忽略，覆盖默认）
 │   └── package.json       ← 后端依赖（express）
 └── web/                   ← 🎨 前端（Vue3 + Vite）
     ├── package.json       ← 前端依赖与构建脚本
