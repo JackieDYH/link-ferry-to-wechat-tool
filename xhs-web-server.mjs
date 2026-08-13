@@ -21,12 +21,16 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
-import { processNote, getToken, loadConfig } from './xhs-core.mjs';
+import { processNote, getToken, loadConfig, reuploadFromBackup } from './xhs-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG = loadConfig();
 const PORT = Number(process.env.PORT || 9527);
 const INDEX_HTML = path.join(__dirname, 'web', 'index.html');
+
+// 本地上传记录索引（模块级，供 startLocalJob / 路由共用）
+const localIdxPath = () => path.join(path.resolve(__dirname, (loadConfig().dataDir || './data')), 'xhs-已上传.json');
+const readLocalIdx = () => { try { return JSON.parse(fs.readFileSync(localIdxPath(), 'utf8')); } catch { return []; } };
 
 const jobs = new Map(); // jobId -> { lines:[], status, result, clients:Set<res> }
 
@@ -103,6 +107,45 @@ function startJob(id, payload) {
     }
     job.clients.clear();
   });
+}
+
+// 本地备份重传任务：不重新抓取链接，直接用本地存档上传草稿
+function startLocalJob(id, rec, payload) {
+  const job = { id, lines: [], status: 'running', result: null, clients: new Set(), links: [rec.url || ''], type: rec.type, dryRun: !!payload.dryRun };
+  jobs.set(id, job);
+  pushLine(job, 'info', `🆕 本地备份重传: ${rec.title || rec.url || ''}`);
+  (async () => {
+    try {
+      const result = await reuploadFromBackup({
+        backupPath: rec.backup,
+        dryRun: payload.dryRun,
+        credentials: payload.credentials,
+        onProgress: (t, m) => pushLine(job, t, m)
+      });
+      // 重传成功后更新索引里的 media_id（指向新草稿）
+      if (result.mediaId) {
+        try {
+          const idx = readLocalIdx();
+          const it = idx.find(r => r.time === rec.time);
+          if (it) {
+            it.mediaId = result.mediaId;
+            fs.writeFileSync(localIdxPath(), JSON.stringify(idx, null, 2), 'utf8');
+          }
+        } catch (e) { pushLine(job, 'warn', '⚠️ 索引 media_id 更新失败: ' + e.message); }
+      }
+      job.status = 'done';
+      job.result = { ok: 1, total: 1 };
+      pushLine(job, 'result', `🏁 重传完成: ${result.dryRun ? '（dry-run 未实际上传）' : 'media_id: ' + result.mediaId}`);
+      for (const res of job.clients) { try { res.end(); } catch { /* ignore */ } }
+      job.clients.clear();
+      setTimeout(() => { jobs.delete(id); }, 10 * 60 * 1000);
+    } catch (e) {
+      job.status = 'error';
+      pushLine(job, 'err', `❌ 重传失败: ${e.message}`);
+      for (const res of job.clients) { try { res.end(); } catch { /* ignore */ } }
+      job.clients.clear();
+    }
+  })();
 }
 
 function readBody(req) {
@@ -362,6 +405,80 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ deleted, failed, remaining: ids.length - batch.length }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // 本地上传记录（本地索引：展示/重新上传/删除）
+  if (u.pathname === '/api/local-records' && (req.method === 'GET' || req.method === 'POST')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ records: readLocalIdx() }));
+    return;
+  }
+  if (u.pathname === '/api/local-records/delete' && req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req));
+      const time = Number(body.time);
+      let idx = readLocalIdx();
+      const item = idx.find(r => r.time === time);
+      idx = idx.filter(r => r.time !== time);
+      fs.writeFileSync(localIdxPath(), JSON.stringify(idx, null, 2), 'utf8');
+      if (item && item.backup) { try { fs.unlinkSync(item.backup); } catch {} }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, deleted: !!item }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (u.pathname === '/api/local-records/delete-batch' && req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req));
+      const times = (body.times || []).map(Number);
+      let idx = readLocalIdx();
+      const toDelete = idx.filter(r => times.includes(r.time));
+      idx = idx.filter(r => !times.includes(r.time));
+      fs.writeFileSync(localIdxPath(), JSON.stringify(idx, null, 2), 'utf8');
+      for (const it of toDelete) { if (it.backup) { try { fs.unlinkSync(it.backup); } catch {} } }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, deleted: toDelete.length }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // 本地备份重传：不重新抓取链接，直接用本地存档上传草稿
+  if (u.pathname === '/api/local-reupload' && req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req));
+      const rec = readLocalIdx().find(r => r.time === Number(body.time));
+      if (!rec) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '本地记录不存在（可能已被删除）' }));
+        return;
+      }
+      if (!rec.backup || !fs.existsSync(rec.backup)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '本地存档文件不存在，无法用备份重传；请改用链接上传' }));
+        return;
+      }
+      const id = randomUUID();
+      startLocalJob(id, rec, {
+        dryRun: !!body.dryRun,
+        credentials: {
+          appId: (body.appId || '').trim(),
+          appSecret: (body.appSecret || '').trim(),
+          author: (body.author || '').trim()
+        }
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ jobId: id }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message }));

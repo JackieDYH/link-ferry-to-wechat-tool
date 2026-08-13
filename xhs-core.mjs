@@ -398,7 +398,123 @@ export async function processNote({ url, type = 'auto', title = null, digest = n
   const backup = path.join(outputDir, 'xhs_' + note.noteId + '_' + finalType + '_' + Date.now() + '.txt');
   fs.writeFileSync(backup, '标题: ' + finalTitle + '\n摘要: ' + finalDigest + '\n类型: ' + finalType + '\n图片: ' + files.join('\n') + '\n\n' + content, 'utf8');
   p('ok', '💾 本地存档: ' + backup);
+
+  // 本地上传记录索引（供网页版「本地上传记录」展示/重新上传/删除）
+  try {
+    const idxPath = path.join(DATA_DIR, 'xhs-已上传.json');
+    let idx = [];
+    try { idx = JSON.parse(fs.readFileSync(idxPath, 'utf8')); } catch {}
+    idx.unshift({
+      url,
+      title: finalTitle,
+      digest: (finalDigest || '').slice(0, 100),
+      type: finalType,
+      time: Date.now(),
+      mediaId: mediaId || '',
+      backup,
+      imageCount: (files || []).length
+    });
+    fs.writeFileSync(idxPath, JSON.stringify(idx.slice(0, 100), null, 2), 'utf8');
+  } catch (e) { p('warn', '⚠️ 本地上传记录写入失败: ' + e.message); }
+
   p('result', '🎉 完成! 草稿已存入公众号「' + cfg.author + '」草稿箱（' + (finalType === 'sticker' ? '贴图' : '文章') + '）media_id: ' + mediaId);
 
   return { mediaId, type: finalType, title: finalTitle, digest: finalDigest, imgDir, backupPath: backup };
+}
+
+// ─── 本地备份解析与重传（不重新抓取链接，直接用本地存档上传草稿） ───
+
+/** 解析备份 txt：
+ *  格式：
+ *    标题: xxx\n摘要: xxx\n类型: sticker|news\n图片: <路径1>\n<路径2>...\n\n<正文>  */
+export function parseBackupFile(text) {
+  const lines = String(text || '').split('\n');
+  const title = (lines[0] || '').replace(/^标题:\s*/, '');
+  const digest = (lines[1] || '').replace(/^摘要:\s*/, '');
+  const type = (lines[2] || '').replace(/^类型:\s*/, '').trim();
+  const images = [];
+  let idx = 3;
+  if (lines[idx] && lines[idx].startsWith('图片:')) {
+    images.push(lines[idx].replace(/^图片:\s*/, '').trim());
+    idx++;
+    while (idx < lines.length && lines[idx].trim() !== '') { images.push(lines[idx].trim()); idx++; }
+  }
+  while (idx < lines.length && lines[idx].trim() === '') idx++; // 跳过分隔空行
+  const content = lines.slice(idx).join('\n').trim();
+  return { title, digest, type, images, content };
+}
+
+export async function reuploadFromBackup({ backupPath, dryRun = false, credentials = null, onProgress = () => {} }) {
+  const p = (t, m) => onProgress(t, m);
+  const cfg = resolveConfig(credentials || {});
+  const credSource = (credentials && (credentials.appId || credentials.appSecret))
+    ? '页面输入' : '配置文件';
+  p('info', '🔑 公众号: ' + cfg.author + '（密钥来源: ' + credSource + '）');
+  p('info', '📂 读取本地存档: ' + backupPath);
+
+  let text;
+  try { text = fs.readFileSync(backupPath, 'utf8'); }
+  catch (e) { throw new Error('本地存档文件不存在或已删除，无法用备份重传：' + e.message); }
+  const b = parseBackupFile(text);
+  const finalType = (b.type === 'news' || b.type === 'sticker') ? b.type : 'auto';
+  p('ok', '标题: ' + b.title);
+  p('ok', '类型: ' + (finalType === 'sticker' ? '贴图(newspic)' : '文章(news)'));
+
+  // 检查本地图片是否存在（备份 txt 里存的是绝对路径）
+  const files = [];
+  for (const f of b.images) {
+    if (!f) continue;
+    if (fs.existsSync(f)) files.push(f);
+    else p('warn', '⚠️ 本地图片已不存在（目录被清理?）: ' + f);
+  }
+  if (files.length === 0) throw new Error('本地图片全部缺失，无法用备份重传；请改用链接重新抓取');
+  p('ok', '本地图片可用 ' + files.length + ' 张（无需重新下载）');
+
+  if (dryRun) {
+    p('info', '⏸️ dry-run 模式，跳过上传。');
+    p('info', '📝 正文预览: ' + b.content.slice(0, 500) + (b.content.length > 500 ? '...' : ''));
+    return { mediaId: null, type: finalType, title: b.title, digest: b.digest, backupPath, dryRun: true };
+  }
+
+  p('info', '🔑 获取 access_token...');
+  const token = await getToken(cfg);
+  p('ok', 'access_token OK');
+
+  let mediaId;
+  if (finalType === 'sticker') {
+    p('info', '⬆️ 上传 ' + files.length + ' 张贴图图片（本地直传，不走抓取）...');
+    const mediaIds = [];
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const r = await uploadPermanentMaterial(cfg, token, files[i], '贴图' + (i + 1));
+        mediaIds.push(r.media_id);
+        p('ok', '贴图 ' + (i + 1) + '/' + files.length + ' media_id: ' + r.media_id);
+      } catch (e) { p('err', '贴图' + (i + 1) + ' 上传失败: ' + e.message); }
+    }
+    if (mediaIds.length === 0) throw new Error('贴图图片上传全部失败');
+    const result = await createStickerDraft(cfg, token, b.title, b.digest, mediaIds, b.content);
+    mediaId = result.media_id;
+    p('ok', '✅ 贴图草稿创建成功! media_id: ' + mediaId);
+  } else {
+    p('info', '⬆️ 上传封面图（本地直传）...');
+    const cover = await uploadPermanentMaterial(cfg, token, files[0], '封面');
+    p('ok', '封面 media_id: ' + cover.media_id);
+    p('info', '⬆️ 上传正文图片 ' + files.length + ' 张...');
+    const htmlParts = [];
+    if (b.content) htmlParts.push('<p>' + b.content.replace(/</g, '&lt;').replace(/\n/g, '<br/>') + '</p>');
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const wechatUrl = await uploadInlineImage(cfg, token, files[i]);
+        htmlParts.push('<img src="' + wechatUrl + '" style="width:100%;"/>');
+        p('ok', '正文图 ' + (i + 1) + '/' + files.length + ' ✓');
+      } catch (e) { p('err', '正文图' + (i + 1) + ' 上传失败: ' + e.message); }
+    }
+    // 注意：备份正文已含页脚（buildContent 时拼入 FOOTER），这里不再重复加
+    const result = await createNewsDraft(cfg, token, b.title, b.digest, htmlParts.join(''), cover.media_id);
+    mediaId = result.media_id;
+    p('ok', '✅ 图文草稿创建成功! media_id: ' + mediaId);
+  }
+
+  p('result', '🎉 重传完成! 草稿已存入公众号「' + cfg.author + '」草稿箱（' + (finalType === 'sticker' ? '贴图' : '文章') + '）media_id: ' + mediaId);
+  return { mediaId, type: finalType, title: b.title, digest: b.digest, backupPath, dryRun: false };
 }

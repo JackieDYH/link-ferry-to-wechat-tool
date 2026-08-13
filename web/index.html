@@ -29,6 +29,7 @@
   .row { display: flex; gap: 12px; flex-wrap: wrap; }
   .row > div { flex: 1; min-width: 160px; }
   #batchDelBtn:disabled { background: #c0c4cc !important; color: #fff !important; cursor: not-allowed; }
+ #batchLocalDel:disabled { background: #c0c4cc !important; color: #fff !important; cursor: not-allowed; }
   .checks { display: flex; align-items: center; gap: 18px; margin-top: 12px; font-size: 14px; }
   .checks label { margin: 0; display: flex; align-items: center; gap: 6px; color: var(--text); cursor: pointer; }
   .btn {
@@ -125,6 +126,21 @@
     </div>
 
     <div class="col-side">
+      <!-- 本地上传记录 -->
+      <div class="card">
+        <div class="statusbar">
+          <span style="font-weight:600;">📁 本地上传记录</span>
+          <button class="btn ghost" id="refreshLocal" style="padding:6px 14px;margin:0;" onclick="loadLocalRecords()">刷新</button>
+        </div>
+        <div class="sub" style="margin-bottom:6px;">本次上传的本地存档（可重新上传到草稿箱或删除记录）</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--muted)">
+          <label style="display:flex;align-items:center;gap:4px;margin:0;cursor:pointer"><input type="checkbox" id="localAll" style="width:auto" onchange="toggleAllLocal(this.checked)"> 全选</label>
+          <span id="localSel">已选 0 条</span>
+          <button style="padding:4px 10px;font-size:12px;background:#ff4d4f;color:#fff;border:none;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;line-height:1;height:26px;flex-shrink:0" onclick="batchDeleteLocal()" id="batchLocalDel" disabled>🗑️ 批量删除</button>
+        </div>
+        <div class="draft-scroll" id="localList" style="font-size:13px;">加载中...</div>
+      </div>
+
       <div class="card">
         <div class="statusbar">
           <span style="font-weight:600;">🗑️ 草稿箱管理</span>
@@ -202,12 +218,14 @@ $('go').addEventListener('click', async () => {
         $('status').textContent = '✅ 完成';
         $('result').style.display = 'block';
         $('result').textContent = line.msg;
+        loadLocalRecords(); loadDrafts();
       }
     };
     es.onerror = () => {
       es.close();
       $('status').textContent = '✅ 完成（连接已关闭）';
       $('go').disabled = false;
+      loadLocalRecords(); loadDrafts();
     };
     es.onopen = () => { $('status').textContent = '⏳ 处理中（已连接进度流）...'; };
   } catch (e) {
@@ -422,6 +440,94 @@ $('cleanOrphans').addEventListener('click', async () => {
     btn.disabled = false;
   }
 });
+
+// ─── 本地上传记录（本地索引：展示/重新上传/删除）───
+async function loadLocalRecords() {
+  const box = $('localList');
+  box.textContent = '加载中...';
+  try {
+    const r = await fetch('/api/local-records', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const d = await r.json();
+    const records = d.records || [];
+    $('localAll').checked = false;
+    updateLocalSel();
+    if (!records.length) { box.textContent = '暂无本地上传记录'; return; }
+    box.innerHTML = '';
+    records.forEach(rec => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.className = 'local-cb'; cb.style.cssText = 'width:auto;flex-shrink:0';
+      cb.dataset.time = rec.time; cb.onchange = updateLocalSel;
+      const info = document.createElement('div');
+      info.style.cssText = 'flex:1;min-width:0;';
+      const title = document.createElement('div');
+      title.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;';
+      title.textContent = rec.title || '(无标题)';
+      const meta = document.createElement('div');
+      meta.style.cssText = 'color:var(--muted);font-size:11px;';
+      const timeStr = rec.time ? new Date(rec.time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+      meta.textContent = (rec.type === 'sticker' ? '贴图' : '文章') + ' · ' + timeStr + (rec.mediaId ? ' ✅' : '');
+      info.appendChild(title); info.appendChild(meta);
+      const btns = document.createElement('div');
+      btns.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
+      const up = document.createElement('button');
+      up.textContent = '重传'; up.style.cssText = 'background:#f0f1f3;border:none;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;'; up.title = '用本地备份直接重传（不重新抓取链接）';
+      up.onclick = () => reuploadLocal(rec);
+      const del = document.createElement('button');
+      del.textContent = '删'; del.style.cssText = 'background:#ff4d4f;color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;';
+      del.onclick = async () => {
+        if (!confirm('删除这条本地记录？（不影响已上传的草稿）')) return;
+        await fetch('/api/local-records/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ time: rec.time }) });
+        loadLocalRecords();
+      };
+      btns.appendChild(up); btns.appendChild(del);
+      row.appendChild(cb); row.appendChild(info); row.appendChild(btns);
+      box.appendChild(row);
+    });
+  } catch (e) { box.textContent = '加载失败: ' + e.message; }
+}
+function updateLocalSel() {
+  const n = document.querySelectorAll('.local-cb:checked').length;
+  const sel = $('localSel'); if (sel) sel.textContent = '已选 ' + n + ' 条';
+  const b = $('batchLocalDel'); if (b) b.disabled = n === 0;
+}
+function toggleAllLocal(checked) { document.querySelectorAll('.local-cb').forEach(c => { c.checked = checked; }); updateLocalSel(); }
+async function batchDeleteLocal() {
+  const times = [...document.querySelectorAll('.local-cb:checked')].map(c => c.dataset.time);
+  if (!times.length) return;
+  if (!confirm('确定删除选中的 ' + times.length + ' 条本地记录？（不影响已上传的草稿）')) return;
+  try {
+    await fetch('/api/local-records/delete-batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ times }) });
+  } catch (e) { alert('删除失败: ' + e.message); }
+  loadLocalRecords();
+}
+async function reuploadLocal(rec) {
+  if (es) es.close();
+  $('result').style.display = 'none';
+  logEl.innerHTML = '';
+  appendLine({ type: 'info', msg: '🔄 重新上传（本地备份直传，不重新抓取）: ' + (rec.title || rec.url) });
+  $('status').textContent = '⏳ 重新上传中...';
+  try {
+    const resp = await fetch('/api/local-reupload', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ time: rec.time, dryRun: $('dryrun').checked, appId: $('appid').value.trim() || null, appSecret: $('appsecret').value.trim() || null, author: $('author').value.trim() || null })
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    es = new EventSource('/api/progress/' + data.jobId);
+    es.onmessage = ev => {
+      const line = JSON.parse(ev.data);
+      appendLine(line);
+      if (line.type === 'result') { $('status').textContent = '✅ 重新上传完成'; loadLocalRecords(); loadDrafts(); es.close(); }
+    };
+    es.onerror = () => { es.close(); $('status').textContent = '✅ 完成（连接已关闭）'; loadLocalRecords(); loadDrafts(); };
+  } catch (e) {
+    $('status').textContent = '❌ 重新上传失败';
+    appendLine({ type: 'err', msg: '❌ ' + e.message });
+  }
+}
+loadLocalRecords();
 </script>
 </body>
 </html>
