@@ -1,14 +1,13 @@
 <script setup>
 // 上传面板：链接输入 + 类型/标题/摘要 + 密钥 + 进度日志（SSE 实时推送）
 import { ref, nextTick, onUnmounted } from 'vue'
-import { creds, apiPost } from '../store.js'
+import { creds, dryRun, apiPost } from '../store.js'
 
 // —— 表单状态 ——
 const links = ref('')
 const type = ref('auto') // auto 自动分类 / sticker 贴图 / news 文章
 const title = ref('')
 const digest = ref('')
-const dryRun = ref(false)
 const credStatus = ref('') // 密钥测试结果提示
 
 // —— 任务状态 ——
@@ -74,12 +73,15 @@ async function startUpload() {
       if (line.type === 'result' && line.msg.includes('全部完成')) {
         status.value = '✅ 完成'
         result.value = line.msg
+        // 通知侧栏刷新本地记录 + 草稿列表
+        window.dispatchEvent(new Event('xhs:data-changed'))
       }
     }
     es.onerror = () => {
       es.close()
       status.value = '✅ 完成（进度连接已关闭）'
       running.value = false
+      window.dispatchEvent(new Event('xhs:data-changed'))
     }
     es.onopen = () => { status.value = '⏳ 处理中（进度连接成功）...' }
   } catch (e) {

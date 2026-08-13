@@ -1,6 +1,6 @@
 // 全局状态 + API 封装
 // 密钥采用"全有或全无"策略：页面填了就用页面的，留空则走后端配置文件（config.json + config.local.json）
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 
 // 页面临时填写的公众号密钥（不写文件，关页面即失效）
 export const creds = reactive({
@@ -8,6 +8,9 @@ export const creds = reactive({
   appSecret: '',
   author: ''
 })
+
+// dry-run 偏好（上传面板与本地重传共用）
+export const dryRun = ref(false)
 
 // 管理类接口统一附带页面密钥（填了则管理面板跟随该账号，留空用配置文件账号）
 function withCreds(extra = {}) {
