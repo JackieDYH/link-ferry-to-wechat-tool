@@ -115,6 +115,35 @@ function startJob(id, payload) {
 const localIdxPath = () => path.join(path.resolve(__dirname, (loadConfig().dataDir || './data')), 'xhs-已上传.json');
 const readLocalIdx = () => { try { return JSON.parse(fs.readFileSync(localIdxPath(), 'utf8')); } catch { return []; } };
 
+// 从备份 txt 第一张图片路径推导下载图片目录（形如 .../notes/xhs_note_<noteId>/），仅当目录名匹配模式才返回
+function backupImgDir(backupPath) {
+  try {
+    const first = String(fs.readFileSync(backupPath, 'utf8')).split('\n').find(l => l.startsWith('图片: '));
+    if (!first) return null;
+    const img = first.slice('图片: '.length).trim();
+    if (!img) return null;
+    const dir = path.dirname(img);
+    return /xhs_note_/.test(path.basename(dir)) ? dir : null;
+  } catch { return null; }
+}
+
+// 删除一条本地记录的磁盘产物：备份 txt + 下载图片目录（若没有其他记录引用同一目录）
+// 返回实际删除的路径列表
+function removeLocalRecordFiles(item, remainingRecords) {
+  const removed = [];
+  if (!item) return removed;
+  // 先解析备份 txt 里的图片目录（此时 txt 还没删），再删文件
+  const dir = item.backup ? backupImgDir(item.backup) : null;
+  if (item.backup) { try { fs.unlinkSync(item.backup); removed.push(item.backup); } catch {} }
+  if (dir && fs.existsSync(dir)) {
+    const stillUsed = (remainingRecords || []).some(r => r.time !== item.time && backupImgDir(r.backup) === dir);
+    if (!stillUsed) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); removed.push(dir); } catch {}
+    }
+  }
+  return removed;
+}
+
 // 本地备份重传任务：不重新抓取链接，直接用本地存档上传草稿
 function startLocalJob(id, rec, payload) {
   const job = { id, lines: [], status: 'running', result: null, clients: new Set(), links: [rec.url || ''], type: rec.type, dryRun: !!payload.dryRun };
@@ -455,7 +484,7 @@ app.post('/api/local-records', (req, res) => {
   res.json({ records: readLocalIdx() });
 });
 
-// 删除单条本地记录（同时删备份 txt，不影响已上传的草稿）
+// 删除单条本地记录（同时清理备份 txt 和下载的图片目录，不影响已上传的草稿）
 app.post('/api/local-records/delete', async (req, res) => {
   try {
     const body = req.body || {};
@@ -464,8 +493,8 @@ app.post('/api/local-records/delete', async (req, res) => {
     const item = idx.find(r => r.time === time);
     idx = idx.filter(r => r.time !== time);
     fs.writeFileSync(localIdxPath(), JSON.stringify(idx, null, 2), 'utf8');
-    if (item && item.backup) { try { fs.unlinkSync(item.backup); } catch {} }
-    res.json({ ok: true, deleted: !!item });
+    const removed = removeLocalRecordFiles(item, idx);
+    res.json({ ok: true, deleted: !!item, removed });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -480,8 +509,9 @@ app.post('/api/local-records/delete-batch', async (req, res) => {
     const toDelete = idx.filter(r => times.includes(r.time));
     idx = idx.filter(r => !times.includes(r.time));
     fs.writeFileSync(localIdxPath(), JSON.stringify(idx, null, 2), 'utf8');
-    for (const it of toDelete) { if (it.backup) { try { fs.unlinkSync(it.backup); } catch {} } }
-    res.json({ ok: true, deleted: toDelete.length });
+    const removed = [];
+    for (const it of toDelete) removed.push(...removeLocalRecordFiles(it, idx));
+    res.json({ ok: true, deleted: toDelete.length, removed });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
