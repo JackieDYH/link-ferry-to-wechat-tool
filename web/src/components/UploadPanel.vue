@@ -1,6 +1,6 @@
 <script setup>
 // 上传面板：链接输入 + 类型/标题/摘要 + 密钥 + 进度日志（SSE 实时推送）
-import { ref, nextTick, onUnmounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { creds, dryRun, apiPost } from '../store.js'
 
 // —— 表单状态 ——
@@ -102,7 +102,33 @@ async function testCred() {
   }
 }
 
-onUnmounted(() => es && es.close())
+// 本地记录重传的进度也走本主日志区（与上传共用）：开始清日志、逐行追加、结束更新状态
+function onReuploadStart(ev) {
+  logs.value = []
+  result.value = ''
+  status.value = '⏳ 重新上传中...'
+  stickToBottom = true
+  appendLine('info', '🔄 重新上传（本地备份直传，不重新抓取）: ' + (ev.detail?.title || ''))
+}
+function onReuploadLog(ev) {
+  appendLine(ev.detail.type, ev.detail.msg)
+}
+function onReuploadEnd() {
+  status.value = '✅ 重新上传完成'
+}
+
+onMounted(() => {
+  window.addEventListener('xhs:reupload-start', onReuploadStart)
+  window.addEventListener('xhs:reupload-log', onReuploadLog)
+  window.addEventListener('xhs:reupload-end', onReuploadEnd)
+})
+
+onUnmounted(() => {
+  if (es) es.close()
+  window.removeEventListener('xhs:reupload-start', onReuploadStart)
+  window.removeEventListener('xhs:reupload-log', onReuploadLog)
+  window.removeEventListener('xhs:reupload-end', onReuploadEnd)
+})
 </script>
 
 <template>

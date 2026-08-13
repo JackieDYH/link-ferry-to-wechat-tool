@@ -20,7 +20,6 @@ const records = ref([])        // 本地索引记录列表
 const localLoading = ref(false)
 const localSelected = ref([])  // 已勾选的记录 time（毫秒时间戳）
 const reuploading = ref(null)  // 正在重传的记录 time
-const reuploadLogs = ref([])   // 重传进度日志（SSE 行）
 let localEs = null             // 重传的 EventSource 句柄
 
 // 格式化本地记录时间（time 是 Date.now() 毫秒）
@@ -187,22 +186,23 @@ async function batchDeleteLocal() {
   loadLocalRecords()
 }
 
-// 本地备份重传：不重新抓取链接，直接用本地存档上传新草稿（SSE 进度显示在本面板）
+// 本地备份重传：不重新抓取链接，直接用本地存档上传新草稿（进度走主日志区）
 async function reuploadLocal(rec) {
   if (localEs) localEs.close()
   reuploading.value = rec.time
-  reuploadLogs.value = [{ type: 'info', msg: '🔄 重新上传（本地备份直传，不重新抓取）: ' + (rec.title || rec.url) }]
+  // 通知主日志区：开始新的重传（清空旧日志）
+  window.dispatchEvent(new CustomEvent('xhs:reupload-start', { detail: { title: rec.title || rec.url } }))
   try {
     const data = await apiPost('/api/local-reupload', { time: rec.time, dryRun: dryRun.value })
     localEs = new EventSource(`/api/progress/${data.jobId}`)
     localEs.onmessage = ev => {
       const line = JSON.parse(ev.data)
-      reuploadLogs.value.push({ type: line.type || 'info', msg: line.msg })
-      if (reuploadLogs.value.length > 200) reuploadLogs.value.shift()
+      window.dispatchEvent(new CustomEvent('xhs:reupload-log', { detail: { type: line.type || 'info', msg: line.msg } }))
       if (line.type === 'result') {
         reuploading.value = null
         loadLocalRecords()
         loadDrafts() // 重传完成刷新草稿箱
+        window.dispatchEvent(new CustomEvent('xhs:reupload-end'))
         localEs.close()
       }
     }
@@ -211,9 +211,11 @@ async function reuploadLocal(rec) {
       reuploading.value = null
       loadLocalRecords()
       loadDrafts()
+      window.dispatchEvent(new CustomEvent('xhs:reupload-end'))
     }
   } catch (e) {
-    reuploadLogs.value.push({ type: 'err', msg: '❌ ' + e.message })
+    window.dispatchEvent(new CustomEvent('xhs:reupload-log', { detail: { type: 'err', msg: '❌ ' + e.message } }))
+    window.dispatchEvent(new CustomEvent('xhs:reupload-end'))
     reuploading.value = null
   }
 }
@@ -269,10 +271,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 重传进度（内嵌小日志） -->
-    <div v-if="reuploadLogs.length" class="local-log">
-      <div v-for="(l, i) in reuploadLogs" :key="i" :class="l.type">{{ l.msg }}</div>
-    </div>
+    <!-- 重传进度走主日志区（与上传共用），不在此处单独显示 -->
   </div>
 
   <div class="card">

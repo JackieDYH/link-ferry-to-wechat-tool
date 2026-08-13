@@ -167,26 +167,6 @@ textarea { min-height: 88px; resize: vertical; }
 .draft-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
 .draft-btns { display: flex; gap: 6px; flex-shrink: 0; }
 
-/* 本地重传小日志（深色终端风格，比主日志矮） */
-.local-log {
-  background: #101418;
-  color: #d7e0e8;
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin-top: 10px;
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  max-height: 180px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.local-log .ok { color: #6be38f; }
-.local-log .err { color: #ff8f8f; }
-.local-log .result { color: #ffd866; font-weight: 600; }
-.local-log .info { color: #8ecbff; }
-
 /* ===== 响应式：窄屏单列 ===== */
 @media (max-width: 900px) {
   .cols { flex-direction: column; }
