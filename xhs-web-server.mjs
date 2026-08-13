@@ -28,6 +28,16 @@ const CONFIG = loadConfig();
 const PORT = Number(process.env.PORT || 9527);
 const INDEX_HTML = path.join(__dirname, 'web', 'index.html');
 
+// 监听地址：默认仅本机；公网/反代场景可设 HOST=0.0.0.0
+const HOST = process.env.HOST || '127.0.0.1';
+
+// 公共模式（多人自助）：服务器 config 没有默认 AppID/AppSecret 时自动开启——
+// 所有用户必须在页面填自己的公众号密钥；禁用共享的「本地上传记录」（避免用户互相看到对方记录）
+const isPublicMode = () => {
+  const c = loadConfig();
+  return !(c.appId && c.appSecret);
+};
+
 // 本地上传记录索引（模块级，供 startLocalJob / 路由共用）
 const localIdxPath = () => path.join(path.resolve(__dirname, (loadConfig().dataDir || './data')), 'xhs-已上传.json');
 const readLocalIdx = () => { try { return JSON.parse(fs.readFileSync(localIdxPath(), 'utf8')); } catch { return []; } };
@@ -189,6 +199,17 @@ function readBody(req) {
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://${req.headers.host}`);
 
+  // 服务信息（免鉴权）：前端据此判断公共模式、是否引导填写密钥
+  if (u.pathname === '/api/server-info' && req.method === 'GET') {
+    const c0 = loadConfig();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      publicMode: isPublicMode(),
+      hasDefaultCreds: !!(c0.appId && c0.appSecret)
+    }));
+    return;
+  }
+
   // 上传页面
   if (u.pathname === '/' || u.pathname === '/index.html') {
     if (!fs.existsSync(INDEX_HTML)) {
@@ -211,9 +232,16 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: '请至少输入一条小红书链接' }));
         return;
       }
-      const id = randomUUID();
+      // 公共模式（服务器无默认密钥）：强制要求页面填写自己的密钥
+      const c0 = loadConfig();
       const pageAppId = (body.appId || '').trim();
       const pageSecret = (body.appSecret || '').trim();
+      if ((!pageAppId || !pageSecret) && (!c0.appId || !c0.appSecret)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '服务器未配置默认公众号密钥：请在页面「⚙️ 公众号密钥」中填写你自己的 AppID 和 AppSecret（两项都要填）' }));
+        return;
+      }
+      const id = randomUUID();
       startJob(id, {
         links,
         type: ['sticker', 'news', 'auto'].includes(body.type) ? body.type : 'auto',
@@ -441,13 +469,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 本地上传记录（本地索引：展示/重新上传/删除）
+  // 本地上传记录（本地索引：展示/重新上传/删除）——公共模式禁用（多人共享服务器时避免互相看到记录）
   if (u.pathname === '/api/local-records' && (req.method === 'GET' || req.method === 'POST')) {
+    if (isPublicMode()) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ records: [], publicMode: true }));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ records: readLocalIdx() }));
     return;
   }
   if (u.pathname === '/api/local-records/delete' && req.method === 'POST') {
+    if (isPublicMode()) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '公共模式不支持本地上传记录操作' }));
+      return;
+    }
     try {
       const body = JSON.parse(await readBody(req));
       const time = Number(body.time);
@@ -465,6 +503,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (u.pathname === '/api/local-records/delete-batch' && req.method === 'POST') {
+    if (isPublicMode()) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '公共模式不支持本地上传记录操作' }));
+      return;
+    }
     try {
       const body = JSON.parse(await readBody(req));
       const times = (body.times || []).map(Number);
@@ -483,8 +526,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 本地备份重传：不重新抓取链接，直接用本地存档上传草稿
+  // 本地备份重传：不重新抓取链接，直接用本地存档上传草稿（公共模式禁用）
   if (u.pathname === '/api/local-reupload' && req.method === 'POST') {
+    if (isPublicMode()) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '公共模式不支持本地上传记录操作' }));
+      return;
+    }
     try {
       const body = JSON.parse(await readBody(req));
       const rec = readLocalIdx().find(r => r.time === Number(body.time));
@@ -614,8 +662,9 @@ const server = http.createServer(async (req, res) => {
   res.end('Not Found');
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, HOST, () => {
   console.log(`\n🌐 小红书→公众号 网页上传工具已启动`);
+  console.log(`   listening: ${HOST}:${PORT}`);
   console.log(`   打开: http://127.0.0.1:${PORT}\n`);
   console.log(`   提示: 仅本机可访问；上传结果进入公众号草稿箱，不会直接发布`);
 });

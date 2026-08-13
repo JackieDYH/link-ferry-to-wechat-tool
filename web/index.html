@@ -87,7 +87,7 @@
           </div>
         </div>
 
-        <details style="margin-top:14px;">
+        <details id="credDetails" style="margin-top:14px;">
           <summary style="font-size:13px;color:var(--muted);cursor:pointer;">⚙️ 公众号密钥（可选，留空使用 config.json 默认配置）</summary>
           <div class="row" style="margin-top:10px;">
             <div>
@@ -127,7 +127,7 @@
 
     <div class="col-side">
       <!-- 本地上传记录 -->
-      <div class="card">
+      <div class="card" id="localCard">
         <div class="statusbar">
           <span style="font-weight:600;">📁 本地上传记录</span>
           <button class="btn ghost" id="refreshLocal" style="padding:6px 14px;margin:0;" onclick="loadLocalRecords()">刷新</button>
@@ -170,6 +170,30 @@ const $ = id => document.getElementById(id);
 const logEl = $('log');
 let es = null;
 $('verBadge').textContent = 'v1.5.0';
+
+// ─── 公共模式（服务器未配置默认密钥时，引导每位用户填自己的公众号密钥）───
+let serverInfo = { publicMode: false, hasDefaultCreds: true };
+async function loadServerInfo() {
+  try {
+    const r = await fetch('/api/server-info');
+    serverInfo = await r.json();
+  } catch { /* 保持默认 */ }
+}
+function applyServerMode() {
+  if (!serverInfo.publicMode) return;
+  // 提示条：告知填写自己的密钥 + IP 白名单
+  let banner = $('pubBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'pubBanner';
+    banner.style.cssText = 'background:#e6f7ff;border:1px solid #91d5ff;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px;';
+    banner.innerHTML = '🔑 <b>公共模式</b>：本服务不存任何公众号密钥，请填写<b>你自己的</b> AppID / AppSecret（只存在你的浏览器里，其他人看不到）。首次使用前，把页面下方显示的<b>服务器公网 IP</b> 加进你公众号的 IP 白名单。';
+    const firstCard = document.querySelector('.card');
+    if (firstCard) firstCard.parentNode.insertBefore(banner, firstCard);
+  }
+  const cred = $('credDetails'); if (cred) cred.open = true;
+  const localCard = $('localCard'); if (localCard) localCard.style.display = 'none';
+}
 
 function appendLine(line) {
   const div = document.createElement('div');
@@ -385,20 +409,22 @@ $('testCred').addEventListener('click', async () => {
 
 async function loadMyIp() {
   const el = $('ipBar');
+  const label = serverInfo.publicMode ? '服务器公网 IP' : '当前公网 IP';
+  const txt = ip => '🌐 ' + label + '：' + ip + '（点此复制，用于公众号白名单）';
   try {
     const r = await fetch('/api/myip');
     const d = await r.json();
-    if (d.error || !d.ip) { el.textContent = '🌐 当前公网 IP：获取失败（点此重试）'; return; }
-    el.textContent = '🌐 当前公网 IP：' + d.ip + '（点此复制，用于公众号白名单）';
+    if (d.error || !d.ip) { el.textContent = '🌐 ' + label + '：获取失败（点此重试）'; return; }
+    el.textContent = txt(d.ip);
     el.onclick = async () => {
       try {
         await navigator.clipboard.writeText(d.ip);
         el.textContent = '✅ 已复制：' + d.ip;
-        setTimeout(() => { el.textContent = '🌐 当前公网 IP：' + d.ip + '（点此复制，用于公众号白名单）'; }, 2000);
+        setTimeout(() => { el.textContent = txt(d.ip); }, 2000);
       } catch { prompt('请手动复制：', d.ip); }
     };
   } catch {
-    el.textContent = '🌐 当前公网 IP：获取失败（点此重试）';
+    el.textContent = '🌐 ' + label + '：获取失败（点此重试）';
     el.onclick = loadMyIp;
   }
 }
@@ -527,7 +553,8 @@ async function reuploadLocal(rec) {
     appendLine({ type: 'err', msg: '❌ ' + e.message });
   }
 }
-loadLocalRecords();
+// 初始加载：先取服务信息（公共模式引导），再加载 IP 与本地记录
+loadServerInfo().then(() => { applyServerMode(); loadMyIp(); loadLocalRecords(); });
 </script>
 </body>
 </html>

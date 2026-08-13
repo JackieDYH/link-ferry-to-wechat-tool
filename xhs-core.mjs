@@ -393,29 +393,33 @@ export async function processNote({ url, type = 'auto', title = null, digest = n
     p('ok', '✅ 图文草稿创建成功! media_id: ' + mediaId);
   }
 
-  const outputDir = path.join(DATA_DIR, 'xhs-backup');
-  fs.mkdirSync(outputDir, { recursive: true });
-  const backup = path.join(outputDir, 'xhs_' + note.noteId + '_' + finalType + '_' + Date.now() + '.txt');
-  fs.writeFileSync(backup, '标题: ' + finalTitle + '\n摘要: ' + finalDigest + '\n类型: ' + finalType + '\n图片: ' + files.join('\n') + '\n\n' + content, 'utf8');
-  p('ok', '💾 本地存档: ' + backup);
+  // 本地存档与上传记录索引：公共模式（服务器无默认密钥，多人共用）下不保存，避免互相看到
+  let backup = null;
+  if (CONFIG.appId && CONFIG.appSecret) {
+    const outputDir = path.join(DATA_DIR, 'xhs-backup');
+    fs.mkdirSync(outputDir, { recursive: true });
+    backup = path.join(outputDir, 'xhs_' + note.noteId + '_' + finalType + '_' + Date.now() + '.txt');
+    fs.writeFileSync(backup, '标题: ' + finalTitle + '\n摘要: ' + finalDigest + '\n类型: ' + finalType + '\n图片: ' + files.join('\n') + '\n\n' + content, 'utf8');
+    p('ok', '💾 本地存档: ' + backup);
 
-  // 本地上传记录索引（供网页版「本地上传记录」展示/重新上传/删除）
-  try {
-    const idxPath = path.join(DATA_DIR, 'xhs-已上传.json');
-    let idx = [];
-    try { idx = JSON.parse(fs.readFileSync(idxPath, 'utf8')); } catch {}
-    idx.unshift({
-      url,
-      title: finalTitle,
-      digest: (finalDigest || '').slice(0, 100),
-      type: finalType,
-      time: Date.now(),
-      mediaId: mediaId || '',
-      backup,
-      imageCount: (files || []).length
-    });
-    fs.writeFileSync(idxPath, JSON.stringify(idx.slice(0, 100), null, 2), 'utf8');
-  } catch (e) { p('warn', '⚠️ 本地上传记录写入失败: ' + e.message); }
+    // 本地上传记录索引（供网页版「本地上传记录」展示/重新上传/删除）
+    try {
+      const idxPath = path.join(DATA_DIR, 'xhs-已上传.json');
+      let idx = [];
+      try { idx = JSON.parse(fs.readFileSync(idxPath, 'utf8')); } catch {}
+      idx.unshift({
+        url,
+        title: finalTitle,
+        digest: (finalDigest || '').slice(0, 100),
+        type: finalType,
+        time: Date.now(),
+        mediaId: mediaId || '',
+        backup,
+        imageCount: (files || []).length
+      });
+      fs.writeFileSync(idxPath, JSON.stringify(idx.slice(0, 100), null, 2), 'utf8');
+    } catch (e) { p('warn', '⚠️ 本地上传记录写入失败: ' + e.message); }
+  }
 
   p('result', '🎉 完成! 草稿已存入公众号「' + cfg.author + '」草稿箱（' + (finalType === 'sticker' ? '贴图' : '文章') + '）media_id: ' + mediaId);
 
